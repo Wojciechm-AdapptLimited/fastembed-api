@@ -62,6 +62,11 @@ async def root() -> str:
     return "Hello World!"
 
 
+@app.get("/api/health")
+async def health() -> dict[str, str]:
+    return {"status": "OK"}
+
+
 @app.get("/api/models")
 async def get_models() -> list[str]:
     """
