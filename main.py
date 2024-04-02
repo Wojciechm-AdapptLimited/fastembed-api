@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 app = FastAPI()
-cache_dir = os.getenv("FASTEMBED_CACHE_PATH", "cache")
+cache_dir = os.getenv("FASTEMBED_CACHE_PATH", "/tmp/fastembed_cache/")
 
 
 class ModelRequest(BaseModel):
@@ -49,7 +49,7 @@ async def get_model_path(request: ModelRequest) -> str:
     else:
         raise ValueError(f"Model {request.model} doesn't exist.")
 
-    path_name = os.path.join(os.getcwd(), cache_dir, path_name)
+    path_name = os.path.join(cache_dir, path_name)
 
     if not os.path.exists(path_name):
         raise ValueError(f"Model {request.model} wasn't pulled.")
