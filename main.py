@@ -1,10 +1,9 @@
 import numpy as np
 import os
-import shutil
 
-from typing import Any, Iterable
+from typing import Any, Iterable, Annotated
 from fastembed.embedding import TextEmbedding as Embedding
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Path
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
@@ -35,8 +34,14 @@ class EmbeddingRequest(ModelRequest):
     texts: list[str]
 
 
-async def get_model_path(request: ModelRequest) -> str:
-    model_info = await get_model_info(request)
+def get_model_info(model: str) -> dict[str, Any]:
+    models = Embedding.list_supported_models()
+    models = list(filter(lambda x: x["model"] == model, models))
+
+    if not models:
+        raise ValueError(f"Model {model} doesn't exist.")
+
+    model_info = models[0]
 
     if "hf" in model_info["sources"]:
         path_name = model_info["sources"]["hf"]
@@ -47,14 +52,13 @@ async def get_model_path(request: ModelRequest) -> str:
         path_name = path_name.split("/")[-1]
         path_name = path_name.split(".")[0]
     else:
-        raise ValueError(f"Model {request.model} doesn't exist.")
+        raise ValueError(f"Model {model} doesn't have a valid source.")
 
     path_name = os.path.join(cache_dir, path_name)
 
-    if not os.path.exists(path_name):
-        raise ValueError(f"Model {request.model} wasn't pulled.")
+    model_info["cached"] = os.path.exists(path_name)
 
-    return path_name
+    return model_info
 
 
 @app.get("/")
@@ -80,13 +84,15 @@ async def get_models() -> list[str]:
     return model_names
 
 
-@app.post("/api/info")
-async def get_model_info(request: ModelRequest) -> dict[str, Any]:
+@app.get("/api/models/{model:path}")
+async def get_model(
+    model: Annotated[str, Path(title="The name of the model to GET")]
+) -> dict[str, Any]:
     """
     Retrieves information about a specific model from the provider.
 
     Args:
-        request (ModelRequest): The request object containing the model name.
+        model (str): The name of the model
 
     Returns:
         dict[str, Any]: A dictionary containing information about the model.
@@ -94,61 +100,12 @@ async def get_model_info(request: ModelRequest) -> dict[str, Any]:
     Raises:
         HTTPException: If the model is not found.
     """
-
-    models = Embedding.list_supported_models()
-    models = list(filter(lambda x: x["model"] == request.model, models))
-
-    if not models:
-        raise HTTPException(status_code=404, detail=f"Model {request.model} not found.")
-
-    model_info = models[0]
+    try:
+        model_info = get_model_info(model)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     return model_info
-
-
-@app.post("/api/pull")
-async def pull_model(request: ModelRequest) -> dict[str, str]:
-    """
-    Pulls a model from the specified provider.
-
-    Args:
-        request (ModelRequest): The request object containing the model name.
-
-    Returns:
-        dict[str, str]: A dictionary containing a success message.
-
-    Raises:
-        HTTPException: If the model could not be pulled.
-    """
-    try:
-        _ = Embedding(request.model, max_length=512)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    return {"message": f"Model {request.model} pulled successfully."}
-
-
-@app.delete("/api/delete")
-async def delete_model(request: ModelRequest) -> dict[str, str]:
-    """
-    Deletes a model from the specified provider.
-
-    Args:
-        request (ModelRequest): The request object containing the model name.
-
-    Returns:
-        dict[str, str]: A dictionary containing a success message.
-
-    Raises:
-        HTTPException: If the model could not be deleted (e.g. if it doesn't exist or wasn't pulled)
-    """
-    try:
-        path_name = await get_model_path(request)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-    shutil.rmtree(path_name)
-
-    return {"message": f"Model {request.model} deleted successfully."}
 
 
 @app.post("/api/embed", response_model=dict[str, list[list[float]]])
@@ -166,7 +123,6 @@ async def embed(request: EmbeddingRequest) -> dict[str, Iterable[np.ndarray]]:
         HTTPException: If the model doesn't exist, wasn't pulled, or if there was an error embedding the passages.
     """
     try:
-        _ = await get_model_path(request)
         embedding = Embedding(request.model)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
